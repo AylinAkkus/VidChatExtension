@@ -1,0 +1,44 @@
+{
+  "name": "TabMaven",
+  "version": "0.0.1",
+  "author": "no one",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "TabMaven",
+    "TabMaven Extension",
+    "TabMaven Chrome Extension"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "fmt": "prettier --write '**/*.{tsx,ts,json,css,scss,md}'",
+    "zip": "npm run build && node src/zip.js"
+  },
+  "dependencies": {
+    "@mantine/core": "^8.3.3",
+    "@mantine/hooks": "^8.3.3",
+    "@tabler/icons-react": "^3.31.0",
+    "lodash": "^4.17.21",
+    "openai": "^6.1.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.2.0",
+    "@types/chrome": "^0.1.12",
+    "@types/lodash": "^4.17.20",
+    "@types/react": "^19.1.14",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.3",
+    "gulp": "^5.0.1",
+    "gulp-zip": "^6.1.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.7"
+  }
+}

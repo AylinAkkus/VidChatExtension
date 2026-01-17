@@ -20,6 +20,8 @@
     "zip": "npm run build && cd build && zip -r ../extension.zip ."
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
+    "@google/generative-ai": "^0.24.1",
     "@mantine/core": "^8.3.3",
     "@mantine/hooks": "^8.3.3",
     "@tabler/icons-react": "^3.31.0",
@@ -27,6 +29,7 @@
     "openai": "^6.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-markdown": "^10.1.0",
     "youtube-caption-extractor": "^1.9.1"
   },
   "devDependencies": {

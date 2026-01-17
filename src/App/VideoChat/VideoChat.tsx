@@ -1,9 +1,10 @@
 import { useEffect, useState, useRef } from 'react'
 import { WorkerMessageTypes, PageState } from '../../background/types'
 import { TranscriptResult } from '../../contentScript/youtubeTranscript'
-import { streamChatResponse, ChatMessage as LLMChatMessage, MODELS, ModelId } from '../../utils/llm'
+import { streamChatResponse, ChatMessage as LLMChatMessage, MODELS, ModelId, getModelConfig, hasApiKey } from '../../utils/llm'
 import { parseTimestampLinks } from '../../utils/timestampUtils'
-import { storageGetJson, storageSetJson } from '../../utils/localStorage'
+import { storageGetJson, storageSetJson, Provider } from '../../utils/localStorage'
+import Settings from '../Settings/Settings'
 import './VideoChat.css'
 
 interface ChatMessage {
@@ -35,6 +36,19 @@ const SUGGESTED_PROMPTS = [
   { label: 'Main takeaway', prompt: 'What is the main takeaway from this video?' },
 ]
 
+const PROVIDER_LABELS: Record<Provider, string> = {
+  openai: 'OpenAI',
+  google: 'Google',
+  anthropic: 'Anthropic',
+}
+
+// Group models by provider
+const MODELS_BY_PROVIDER = MODELS.reduce((acc, model) => {
+  if (!acc[model.provider]) acc[model.provider] = []
+  acc[model.provider].push(model)
+  return acc
+}, {} as Record<Provider, typeof MODELS>)
+
 const VideoChat = () => {
   const [pageState, setPageState] = useState<PageState>('loading')
   const [transcript, setTranscript] = useState<TranscriptResult | null>(null)
@@ -48,32 +62,45 @@ const VideoChat = () => {
   const [showMenu, setShowMenu] = useState(false)
   const [showModelMenu, setShowModelMenu] = useState(false)
   const [showChatsMenu, setShowChatsMenu] = useState(false)
-  const [selectedModel, setSelectedModel] = useState<ModelId>('gpt-5-mini')
+  const [selectedModel, setSelectedModel] = useState<ModelId>('gemini-3-flash-preview')
   const [storedChats, setStoredChats] = useState<StoredChat[]>([])
   const [currentChatId, setCurrentChatId] = useState<string | null>(null)
-  const [loadedChatVideoId, setLoadedChatVideoId] = useState<string | null>(null) // Track if viewing a past chat for different video
+  const [loadedChatVideoId, setLoadedChatVideoId] = useState<string | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
+  const [apiKeyStatus, setApiKeyStatus] = useState<Record<Provider, boolean>>({
+    openai: false,
+    google: false,
+    anthropic: false,
+  })
   
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   
-  // Refs to track current values for message handler (avoids stale closures)
   const currentVideoIdRef = useRef<string | null>(null)
   
-  // Keep ref in sync with state
   useEffect(() => {
     currentVideoIdRef.current = videoInfo?.videoId || null
   }, [videoInfo?.videoId])
 
-  // Load stored model preference and chats on mount
+  // Check API key status on mount and when returning from settings
+  const checkApiKeyStatus = async () => {
+    const [openai, google, anthropic] = await Promise.all([
+      hasApiKey('openai'),
+      hasApiKey('google'),
+      hasApiKey('anthropic'),
+    ])
+    setApiKeyStatus({ openai, google, anthropic })
+  }
+
   useEffect(() => {
     storageGetJson<ModelId>(STORAGE_KEY_MODEL).then((model) => {
       if (model) setSelectedModel(model)
     })
     loadStoredChats()
+    checkApiKeyStatus()
   }, [])
 
-  // Close menu on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -117,7 +144,6 @@ const VideoChat = () => {
       setCurrentChatId(chatId)
     }
 
-    // Keep only last 50 chats
     const trimmedChats = chats.slice(0, 50)
     await storageSetJson(STORAGE_KEY_CHATS, trimmedChats)
     setStoredChats(trimmedChats)
@@ -142,7 +168,6 @@ const VideoChat = () => {
     setShowChatsMenu(false)
     setShowMenu(false)
     
-    // Track if this chat is for a different video than current
     if (chat.videoId !== videoInfo?.videoId) {
       setLoadedChatVideoId(chat.videoId)
     } else {
@@ -150,14 +175,21 @@ const VideoChat = () => {
     }
   }
 
-  // Notify background when side panel opens/closes for toggle behavior
+  const handleOpenSettings = () => {
+    setShowMenu(false)
+    setShowSettings(true)
+  }
+
+  const handleCloseSettings = () => {
+    setShowSettings(false)
+    checkApiKeyStatus()
+  }
+
   useEffect(() => {
-    // Get current window ID and notify background we're open
     chrome.windows.getCurrent().then(win => {
       chrome.runtime.sendMessage({ type: 'sidePanelOpened', windowId: win.id })
     })
 
-    // Listen for close command from background
     const handleClose = (message: { type: string }) => {
       if (message.type === 'closeSidePanel') {
         window.close()
@@ -165,7 +197,6 @@ const VideoChat = () => {
     }
     chrome.runtime.onMessage.addListener(handleClose)
 
-    // Notify on unmount (before close)
     return () => {
       chrome.runtime.onMessage.removeListener(handleClose)
       chrome.windows.getCurrent().then(win => {
@@ -178,7 +209,6 @@ const VideoChat = () => {
     const handleMessage = (message: { type: string; payload?: any }) => {
       switch (message.type) {
         case WorkerMessageTypes.navigationStarted:
-          // New video detected, transcript loading
           console.log('📥 Side panel: navigationStarted', message.payload)
           const newVideoId = message.payload?.videoId
           const isNewVideo = newVideoId && newVideoId !== currentVideoIdRef.current
@@ -188,7 +218,6 @@ const VideoChat = () => {
           setErrorMessage(null)
           setLoadedChatVideoId(null)
           
-          // Always update videoInfo with new video, clear title until transcript loads
           if (newVideoId) {
             setVideoInfo({
               videoId: newVideoId,
@@ -196,7 +225,6 @@ const VideoChat = () => {
             })
           }
           
-          // Clear chat if navigating to different video
           if (isNewVideo) {
             console.log('📥 Clearing chat - new video:', newVideoId, 'was:', currentVideoIdRef.current)
             setChatHistory([])
@@ -205,22 +233,18 @@ const VideoChat = () => {
           break
           
         case WorkerMessageTypes.noVideoPage:
-          // Navigated away from video page
           console.log('📥 Side panel: noVideoPage')
           setPageState('no_video')
           setTranscript(null)
           setVideoInfo(null)
           setLoadedChatVideoId(null)
-          // Don't clear chat history - user might want to continue viewing
           break
           
         case WorkerMessageTypes.transcriptLoaded:
-          // Transcript ready
           console.log('📥 Side panel: transcriptLoaded', message.payload?.videoId)
           const data: TranscriptResult = message.payload
           const transcriptIsNewVideo = data.videoId && data.videoId !== currentVideoIdRef.current
           
-          // Clear chat if this is a different video than what we had
           if (transcriptIsNewVideo) {
             console.log('📥 Transcript for new video, clearing chat')
             setChatHistory([])
@@ -248,7 +272,6 @@ const VideoChat = () => {
           
         case 'tabActivated':
         case 'refreshState':
-          // User switched to a different tab OR clicked "Ask AI" button again
           console.log('📥 Side panel:', message.type, message.payload)
           const tabState = message.payload
           const tabVideoId = tabState.transcript?.videoId || tabState.videoId
@@ -275,7 +298,6 @@ const VideoChat = () => {
             }
           }
           
-          // Clear chat if different video
           if (tabIsNewVideo) {
             setChatHistory([])
             setCurrentChatId(null)
@@ -286,10 +308,8 @@ const VideoChat = () => {
 
     chrome.runtime.onMessage.addListener(handleMessage)
 
-    // Request initial state
     chrome.runtime.sendMessage({ type: WorkerMessageTypes.tabStateRequest }, (response) => {
       if (chrome.runtime.lastError) {
-        // Content script not ready, try getTranscript as fallback
         chrome.runtime.sendMessage({ type: WorkerMessageTypes.getTranscript }, (resp) => {
           if (resp?.success && resp.data) {
             setTranscript(resp.data)
@@ -329,7 +349,7 @@ const VideoChat = () => {
     return () => {
       chrome.runtime.onMessage.removeListener(handleMessage)
     }
-  }, []) // Empty deps - handler uses refs for current state
+  }, [])
 
   useEffect(() => {
     if (scrollAreaRef.current) {
@@ -398,12 +418,12 @@ const VideoChat = () => {
         payload: { response: response.response },
       })
     } catch (error) {
-      const errorMessage: ChatMessage = {
+      const errorMsg: ChatMessage = {
         role: 'assistant',
         content: `Sorry, I encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}`,
         timestamp: Date.now(),
       }
-      const finalHistory = [...newHistory, errorMessage]
+      const finalHistory = [...newHistory, errorMsg]
       setChatHistory(finalHistory)
       setStreamingContent('')
     } finally {
@@ -424,13 +444,23 @@ const VideoChat = () => {
     return firstUserMsg?.content.slice(0, 40) + (firstUserMsg && firstUserMsg.content.length > 40 ? '...' : '') || 'Empty chat'
   }
 
-  // Header component
+  // Check if current model's provider has API key
+  const currentModelConfig = getModelConfig(selectedModel)
+  const hasCurrentProviderKey = apiKeyStatus[currentModelConfig.provider]
+
   const Header = () => (
     <div className="vc-header">
       <button className="vc-icon-btn" onClick={handleNewChat} title="New chat">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 20h9" />
           <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+        </svg>
+      </button>
+
+      <button className="vc-icon-btn" onClick={handleOpenSettings} title="Settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
         </svg>
       </button>
       
@@ -449,7 +479,10 @@ const VideoChat = () => {
               className="vc-menu-item"
               onClick={() => { setShowModelMenu(!showModelMenu); setShowChatsMenu(false) }}
             >
-              <span>{MODELS.find(m => m.id === selectedModel)?.name}</span>
+              <span className="vc-menu-item-label">
+                {MODELS.find(m => m.id === selectedModel)?.name}
+                {!hasCurrentProviderKey && <span className="vc-menu-item-warning">!</span>}
+              </span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M9 18l6-6-6-6" />
               </svg>
@@ -465,22 +498,46 @@ const VideoChat = () => {
               </svg>
             </button>
 
-            {/* Model submenu */}
+            <button className="vc-menu-item" onClick={handleOpenSettings}>
+              <span>Settings</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
+
+            {/* Model submenu - grouped by provider */}
             {showModelMenu && (
-              <div className="vc-submenu">
-                {MODELS.map((model) => (
-                  <button
-                    key={model.id}
-                    className={`vc-menu-item ${selectedModel === model.id ? 'vc-menu-item-active' : ''}`}
-                    onClick={() => handleModelChange(model.id)}
-                  >
-                    {model.name}
-                    {selectedModel === model.id && (
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M20 6L9 17l-5-5" />
-                      </svg>
-                    )}
-                  </button>
+              <div className="vc-submenu vc-submenu-models">
+                {(Object.keys(MODELS_BY_PROVIDER) as Provider[]).map((provider) => (
+                  <div key={provider} className="vc-model-group">
+                    <div className="vc-model-group-header">
+                      <span>{PROVIDER_LABELS[provider]}</span>
+                      {!apiKeyStatus[provider] && (
+                        <span className="vc-model-group-warning" title="API key not configured">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <circle cx="12" cy="12" r="10" />
+                            <line x1="12" y1="8" x2="12" y2="12" />
+                            <line x1="12" y1="16" x2="12.01" y2="16" />
+                          </svg>
+                        </span>
+                      )}
+                    </div>
+                    {MODELS_BY_PROVIDER[provider].map((model) => (
+                      <button
+                        key={model.id}
+                        className={`vc-menu-item vc-model-item ${selectedModel === model.id ? 'vc-menu-item-active' : ''} ${!apiKeyStatus[provider] ? 'vc-menu-item-disabled' : ''}`}
+                        onClick={() => handleModelChange(model.id)}
+                      >
+                        {model.name}
+                        {selectedModel === model.id && (
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M20 6L9 17l-5-5" />
+                          </svg>
+                        )}
+                      </button>
+                    ))}
+                  </div>
                 ))}
               </div>
             )}
@@ -512,8 +569,12 @@ const VideoChat = () => {
     </div>
   )
 
-  // Determine if we can send messages
-  const canSend = pageState === 'ready' && transcript?.transcript && !isProcessing && !loadedChatVideoId
+  // Show settings view
+  if (showSettings) {
+    return <Settings onBack={handleCloseSettings} />
+  }
+
+  const canSend = pageState === 'ready' && transcript?.transcript && !isProcessing && !loadedChatVideoId && hasCurrentProviderKey
   const isTranscriptLoading = pageState === 'loading'
   const isViewingPastChat = loadedChatVideoId !== null && loadedChatVideoId !== videoInfo?.videoId
 
@@ -556,6 +617,19 @@ const VideoChat = () => {
   return (
     <div className="vc-container">
       <Header />
+      
+      {/* API Key missing banner */}
+      {!hasCurrentProviderKey && (
+        <div className="vc-api-key-banner" onClick={handleOpenSettings}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+          </svg>
+          <span>Add {PROVIDER_LABELS[currentModelConfig.provider]} API key to use {currentModelConfig.name}</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M9 18l6-6-6-6" />
+          </svg>
+        </div>
+      )}
       
       {/* Loading banner */}
       {isTranscriptLoading && (
@@ -650,18 +724,34 @@ const VideoChat = () => {
           <textarea
             ref={inputRef}
             className="vc-input"
-            placeholder={isTranscriptLoading ? "Type your question while transcript loads..." : isViewingPastChat ? "Navigate to video to chat" : "Ask anything..."}
+            placeholder={
+              !hasCurrentProviderKey 
+                ? "Add API key in Settings to chat..." 
+                : isTranscriptLoading 
+                  ? "Type your question while transcript loads..." 
+                  : isViewingPastChat 
+                    ? "Navigate to video to chat" 
+                    : "Ask anything..."
+            }
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={isProcessing || isViewingPastChat}
+            disabled={isProcessing || isViewingPastChat || !hasCurrentProviderKey}
             rows={1}
           />
           <button
             className="vc-send-btn"
             onClick={() => sendMessage(question)}
             disabled={!question.trim() || !canSend}
-            title={isTranscriptLoading ? "Waiting for transcript..." : isViewingPastChat ? "Navigate to video first" : "Send message"}
+            title={
+              !hasCurrentProviderKey 
+                ? "API key required" 
+                : isTranscriptLoading 
+                  ? "Waiting for transcript..." 
+                  : isViewingPastChat 
+                    ? "Navigate to video first" 
+                    : "Send message"
+            }
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z" />

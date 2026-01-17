@@ -1,6 +1,9 @@
 import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import Anthropic from '@anthropic-ai/sdk';
 import { TranscriptSegment } from '../contentScript/youtubeTranscript';
 import { formatTimestamp } from './timestampUtils';
+import { getApiKey, Provider } from './localStorage';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -13,34 +16,64 @@ export interface ChatResponse {
   errorMessage?: string;
 }
 
-export type ModelId = 'gpt-5.2' | 'gpt-5-mini';
+export type ModelId =
+  | 'gpt-5.2'
+  | 'gpt-5-mini'
+  | 'gemini-3-pro-preview'
+  | 'gemini-3-flash-preview'
+  | 'claude-sonnet-4-5'
+  | 'claude-opus-4-5';
 
-export const MODELS: { id: ModelId; name: string }[] = [
-  { id: 'gpt-5.2', name: 'GPT-5.2' },
-  { id: 'gpt-5-mini', name: 'GPT-5 Mini' },
+export interface ModelConfig {
+  id: ModelId;
+  name: string;
+  provider: Provider;
+}
+
+export const MODELS: ModelConfig[] = [
+  { id: 'gpt-5-mini', name: 'GPT-5 Mini', provider: 'openai' },
+  { id: 'gpt-5.2', name: 'GPT-5.2', provider: 'openai' },
+  { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', provider: 'google' },
+  { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro', provider: 'google' },
+  { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', provider: 'anthropic' },
+  { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', provider: 'anthropic' },
 ];
 
-const getClient = () => {
-  const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('VITE_OPENAI_API_KEY is not set. Please create a .env.local file with your API key.');
-  }
-
-  return new OpenAI({
-    apiKey,
-    dangerouslyAllowBrowser: true,
-  });
+export const getModelConfig = (modelId: ModelId): ModelConfig => {
+  return MODELS.find((m) => m.id === modelId) || MODELS[0];
 };
 
-/**
- * Format transcript segments into a readable string
- */
+const getOpenAIClient = async (): Promise<OpenAI> => {
+  const apiKey = (await getApiKey('openai')) || import.meta.env.VITE_OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('OpenAI API key not configured. Please add your API key in Settings.');
+  }
+  return new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+};
+
+const getGoogleClient = async (): Promise<GoogleGenerativeAI> => {
+  const apiKey = (await getApiKey('google')) || import.meta.env.VITE_GOOGLE_API_KEY;
+  if (!apiKey) {
+    throw new Error('Google API key not configured. Please add your API key in Settings.');
+  }
+  return new GoogleGenerativeAI(apiKey);
+};
+
+const getAnthropicClient = async (): Promise<Anthropic> => {
+  const apiKey = (await getApiKey('anthropic')) || import.meta.env.VITE_ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error('Anthropic API key not configured. Please add your API key in Settings.');
+  }
+  return new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
+};
+
 function formatTranscriptForLLM(transcript: TranscriptSegment[]): string {
-  return transcript.map(segment => {
-    const timestamp = formatTimestamp(segment.start);
-    return `[${timestamp}] ${segment.text}`;
-  }).join('\n');
+  return transcript
+    .map((segment) => {
+      const timestamp = formatTimestamp(segment.start);
+      return `[${timestamp}] ${segment.text}`;
+    })
+    .join('\n');
 }
 
 const systemPrompt = `You are a helpful AI assistant that answers questions about YouTube videos based on their transcripts and metadata.
@@ -74,9 +107,6 @@ interface VideoMetadata {
   duration?: string;
 }
 
-/**
- * Build messages array for LLM request
- */
 function buildMessages(
   transcript: TranscriptSegment[],
   chatHistory: ChatMessage[],
@@ -84,7 +114,7 @@ function buildMessages(
   metadata?: VideoMetadata
 ): ChatMessage[] {
   const formattedTranscript = formatTranscriptForLLM(transcript);
-  
+
   let metadataContext = '';
   if (metadata) {
     metadataContext = `Video Information:
@@ -105,41 +135,134 @@ ${metadata.description ? `- Description: ${metadata.description.substring(0, 500
   ];
 }
 
-/**
- * Stream chat response from LLM with callbacks for each chunk
- */
+// OpenAI streaming
+async function streamOpenAI(
+  messages: ChatMessage[],
+  model: ModelId,
+  onChunk: (chunk: string, fullText: string) => void
+): Promise<string> {
+  const client = await getOpenAIClient();
+  const stream = await client.chat.completions.create({
+    model: model,
+    messages: messages as any,
+    stream: true,
+  });
+
+  let fullResponse = '';
+  for await (const chunk of stream) {
+    const content = chunk.choices[0]?.delta?.content || '';
+    if (content) {
+      fullResponse += content;
+      onChunk(content, fullResponse);
+    }
+  }
+  return fullResponse;
+}
+
+// Google Gemini streaming
+async function streamGoogle(
+  messages: ChatMessage[],
+  model: ModelId,
+  onChunk: (chunk: string, fullText: string) => void
+): Promise<string> {
+  const client = await getGoogleClient();
+  const genModel = client.getGenerativeModel({ model });
+
+  // Convert messages to Gemini format
+  const systemMessage = messages.find((m) => m.role === 'system');
+  const chatMessages = messages.filter((m) => m.role !== 'system');
+
+  // Build contents array for Gemini
+  const contents = chatMessages.map((m) => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }],
+  }));
+
+  const result = await genModel.generateContentStream({
+    contents,
+    systemInstruction: systemMessage?.content,
+  });
+
+  let fullResponse = '';
+  for await (const chunk of result.stream) {
+    const content = chunk.text();
+    if (content) {
+      fullResponse += content;
+      onChunk(content, fullResponse);
+    }
+  }
+  return fullResponse;
+}
+
+// Anthropic Claude streaming
+async function streamAnthropic(
+  messages: ChatMessage[],
+  model: ModelId,
+  onChunk: (chunk: string, fullText: string) => void
+): Promise<string> {
+  const client = await getAnthropicClient();
+
+  // Extract system message
+  const systemMessage = messages.find((m) => m.role === 'system');
+  const chatMessages = messages.filter((m) => m.role !== 'system');
+
+  // Convert to Anthropic format
+  const anthropicMessages = chatMessages.map((m) => ({
+    role: m.role as 'user' | 'assistant',
+    content: m.content,
+  }));
+
+  const stream = await client.messages.stream({
+    model: model,
+    max_tokens: 4096,
+    system: systemMessage?.content,
+    messages: anthropicMessages,
+  });
+
+  let fullResponse = '';
+  for await (const event of stream) {
+    if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+      const content = event.delta.text;
+      if (content) {
+        fullResponse += content;
+        onChunk(content, fullResponse);
+      }
+    }
+  }
+  return fullResponse;
+}
+
 export async function streamChatResponse(
   transcript: TranscriptSegment[],
   chatHistory: ChatMessage[],
   question: string,
   onChunk: (chunk: string, fullText: string) => void,
   metadata?: VideoMetadata,
-  model: ModelId = 'gpt-5-mini'
+  model: ModelId = 'gemini-3-flash-preview'
 ): Promise<ChatResponse> {
   try {
     console.log('💬 Streaming chat response for question:', question);
 
-    const client = getClient();
     const messages = buildMessages(transcript, chatHistory, question, metadata);
+    const modelConfig = getModelConfig(model);
 
-    const stream = await client.chat.completions.create({
-      model: model,
-      messages: messages as any,
-      stream: true,
-    });
+    let fullResponse: string;
 
-    let fullResponse = '';
-
-    for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content || '';
-      if (content) {
-        fullResponse += content;
-        onChunk(content, fullResponse);
-      }
+    switch (modelConfig.provider) {
+      case 'openai':
+        fullResponse = await streamOpenAI(messages, model, onChunk);
+        break;
+      case 'google':
+        fullResponse = await streamGoogle(messages, model, onChunk);
+        break;
+      case 'anthropic':
+        fullResponse = await streamAnthropic(messages, model, onChunk);
+        break;
+      default:
+        throw new Error(`Unknown provider: ${modelConfig.provider}`);
     }
 
     console.log('✅ Chat response streamed');
-
     return { response: fullResponse };
   } catch (error) {
     console.error('❌ Error streaming chat response:', error);
@@ -151,3 +274,20 @@ export async function streamChatResponse(
   }
 }
 
+// Check if a provider has an API key configured
+export async function hasApiKey(provider: Provider): Promise<boolean> {
+  const key = await getApiKey(provider);
+  if (key) return true;
+
+  // Fall back to env vars for development
+  switch (provider) {
+    case 'openai':
+      return !!import.meta.env.VITE_OPENAI_API_KEY;
+    case 'google':
+      return !!import.meta.env.VITE_GOOGLE_API_KEY;
+    case 'anthropic':
+      return !!import.meta.env.VITE_ANTHROPIC_API_KEY;
+    default:
+      return false;
+  }
+}

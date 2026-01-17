@@ -1,58 +1,71 @@
 import React from 'react'
+import Markdown from 'react-markdown'
 
 /**
- * Parse timestamp links in text and make them clickable
+ * Render markdown with clickable timestamp links
  * Timestamps in format [MM:SS] or [HH:MM:SS]
  */
 export function parseTimestampLinks(text: string, videoId: string): React.ReactNode {
-  // Regex to match timestamps like [1:23] or [1:23:45]
+  return (
+    <Markdown
+      components={{
+        // Handle paragraphs - render timestamps inside them
+        p: ({ children }) => <p>{processChildren(children, videoId)}</p>,
+        // Handle list items
+        li: ({ children }) => <li>{processChildren(children, videoId)}</li>,
+        // Handle strong/bold
+        strong: ({ children }) => <strong>{processChildren(children, videoId)}</strong>,
+        // Handle emphasis/italic
+        em: ({ children }) => <em>{processChildren(children, videoId)}</em>,
+      }}
+    >
+      {text}
+    </Markdown>
+  )
+}
+
+function processChildren(children: React.ReactNode, videoId: string): React.ReactNode {
+  return React.Children.map(children, (child) => {
+    if (typeof child === 'string') {
+      return parseTimestampsInText(child, videoId)
+    }
+    return child
+  })
+}
+
+function parseTimestampsInText(text: string, videoId: string): React.ReactNode {
   const timestampRegex = /\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]/g
-  
   const parts: React.ReactNode[] = []
   let lastIndex = 0
   let match
 
   while ((match = timestampRegex.exec(text)) !== null) {
-    // Add text before the timestamp
     if (match.index > lastIndex) {
       parts.push(text.substring(lastIndex, match.index))
     }
 
-    const fullMatch = match[0] // e.g., "[1:23]"
+    const fullMatch = match[0]
     const hours = match[3] ? parseInt(match[1]) : 0
     const minutes = match[3] ? parseInt(match[2]) : parseInt(match[1])
     const seconds = match[3] ? parseInt(match[3]) : parseInt(match[2])
-
-    // Calculate total seconds
     const totalSeconds = hours * 3600 + minutes * 60 + seconds
 
-    // Create clickable link
     parts.push(
       <a
         key={match.index}
         href={`https://www.youtube.com/watch?v=${videoId}&t=${totalSeconds}s`}
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{
-          color: '#1976d2',
-          textDecoration: 'none',
-          fontWeight: 600,
-          cursor: 'pointer',
-        }}
         onClick={(e) => {
           e.preventDefault()
-          // Try to seek in the current tab's video player
           seekToTimestamp(totalSeconds)
         }}
+        className="vc-timestamp-link"
       >
         {fullMatch}
       </a>
     )
-
     lastIndex = match.index + fullMatch.length
   }
 
-  // Add remaining text
   if (lastIndex < text.length) {
     parts.push(text.substring(lastIndex))
   }

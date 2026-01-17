@@ -11,7 +11,7 @@ export default defineManifest({
   manifest_version: 3,
   icons: {
     16: 'public/img/icon-16.png',
-    32: 'public/img/icon-34.png',
+    32: 'public/img/icon-32.png',
     48: 'public/img/icon-48.png',
     128: 'public/img/icon-128.png',
   },
@@ -54,5 +54,10 @@ export default defineManifest({
     'scripting',
     'sidePanel',
   ],
-  host_permissions: ['https://localhost:3000/*', '<all_urls>'],
+  host_permissions: [
+    'https://www.youtube.com/*',
+    'https://api.openai.com/*',
+    'https://generativelanguage.googleapis.com/*',
+    'https://api.anthropic.com/*',
+  ],
 } as any)

@@ -7,6 +7,8 @@ let askAiButton: HTMLElement | null = null
 let pendingExtractionId: number = 0 // Used to cancel stale extractions
 let infoCardObserver: MutationObserver | null = null
 
+const ONBOARDING_STORAGE_KEY = 'vidchat-has-seen-hint'
+
 // Selectors for YouTube's info overlays that appear in top-right
 const INFO_OVERLAY_SELECTORS = [
   '.iv-branding',           // Channel branding watermark
@@ -86,6 +88,83 @@ function stopInfoOverlayObserver() {
 }
 
 /**
+ * Add one-time hint tooltip and pulse animation to button
+ */
+async function maybeShowOnboardingHint(btn: HTMLElement, playerContainer: HTMLElement) {
+  try {
+    const result = await chrome.storage.local.get(ONBOARDING_STORAGE_KEY)
+    if (result[ONBOARDING_STORAGE_KEY]) return // Already seen
+    
+    // Add pulse animation
+    const style = document.createElement('style')
+    style.id = 'vidchat-onboarding-style'
+    style.textContent = `
+      @keyframes vidchat-pulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7); }
+        50% { box-shadow: 0 0 0 12px rgba(255, 0, 0, 0); }
+      }
+      #ask-ai-overlay-btn.vidchat-pulse {
+        animation: vidchat-pulse 1.5s ease-in-out 3;
+      }
+      .vidchat-hint {
+        position: absolute;
+        top: 60px;
+        right: 16px;
+        background: #fff;
+        color: #1a1a1a;
+        padding: 10px 14px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+        z-index: 2001;
+        max-width: 200px;
+        opacity: 0;
+        transform: translateY(-8px);
+        animation: vidchat-hint-in 0.3s ease forwards 0.5s;
+      }
+      @keyframes vidchat-hint-in {
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .vidchat-hint::before {
+        content: '';
+        position: absolute;
+        top: -6px;
+        right: 24px;
+        border: 6px solid transparent;
+        border-bottom-color: #fff;
+        border-top: 0;
+      }
+    `
+    document.head.appendChild(style)
+    
+    // Add pulse class to button
+    btn.classList.add('vidchat-pulse')
+    
+    // Create hint tooltip
+    const hint = document.createElement('div')
+    hint.className = 'vidchat-hint'
+    hint.textContent = 'Click here to chat with this video using AI!'
+    playerContainer.appendChild(hint)
+    
+    // Mark as seen and clean up after click or 8 seconds
+    const cleanup = () => {
+      chrome.storage.local.set({ [ONBOARDING_STORAGE_KEY]: true })
+      btn.classList.remove('vidchat-pulse')
+      hint.remove()
+      style.remove()
+    }
+    
+    btn.addEventListener('click', cleanup, { once: true })
+    setTimeout(cleanup, 8000)
+    
+  } catch (e) {
+    console.warn('Could not show onboarding hint:', e)
+  }
+}
+
+/**
  * Create and inject the "Ask AI" overlay button on the video player
  */
 function injectAskAiButton() {
@@ -160,6 +239,9 @@ function injectAskAiButton() {
   
   // Start watching for info overlays
   startInfoOverlayObserver()
+  
+  // Show one-time onboarding hint for new users
+  maybeShowOnboardingHint(btn, playerContainer)
   
   console.log('✨ Ask AI button injected')
 }

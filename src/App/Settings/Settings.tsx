@@ -147,7 +147,7 @@ const Settings = ({ onBack }: SettingsProps) => {
           <p>
             VidChat lets you chat with YouTube videos using AI. Your API keys are stored locally and never sent to our servers.
           </p>
-          <p className="settings-version">Version 0.0.1</p>
+          <p className="settings-version">Version 1.0.0</p>
         </div>
       </div>
     </div>

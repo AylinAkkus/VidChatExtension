@@ -275,3 +275,45 @@ export async function hasApiKey(provider: Provider): Promise<boolean> {
   const key = await getApiKey(provider);
   return !!key;
 }
+
+// Provider default models
+export const PROVIDER_DEFAULTS: Record<Provider, ModelId> = {
+  google: 'gemini-3-flash-preview',
+  openai: 'gpt-5-mini',
+  anthropic: 'claude-sonnet-4-5',
+};
+
+// Priority order for fallback (Google → OpenAI → Anthropic)
+const PROVIDER_PRIORITY: Provider[] = ['google', 'openai', 'anthropic'];
+
+// Get all providers that have API keys configured
+export async function getAvailableProviders(): Promise<Provider[]> {
+  const available: Provider[] = [];
+  for (const provider of PROVIDER_PRIORITY) {
+    if (await hasApiKey(provider)) {
+      available.push(provider);
+    }
+  }
+  return available;
+}
+
+// Auto-select best available model
+export async function autoSelectModel(currentModel?: ModelId): Promise<ModelId | null> {
+  const availableProviders = await getAvailableProviders();
+  
+  // If no providers available, return null
+  if (availableProviders.length === 0) {
+    return null;
+  }
+  
+  // If current model's provider has a key, keep it
+  if (currentModel) {
+    const currentProvider = getModelConfig(currentModel).provider;
+    if (availableProviders.includes(currentProvider)) {
+      return currentModel;
+    }
+  }
+  
+  // Otherwise, select first available provider's default
+  return PROVIDER_DEFAULTS[availableProviders[0]];
+}

@@ -151,14 +151,15 @@ const VideoChat = () => {
     }
   }
 
-  const handleCloseSettings = () => {
+  const handleCloseSettings = async () => {
     setShowSettings(false)
+    
     // Reload selected model in case it changed in settings
-    storageGetJson<ModelId>(STORAGE_KEY_MODEL).then((model) => {
-      if (model) setSelectedModel(model)
-    })
+    const model = await storageGetJson<ModelId>(STORAGE_KEY_MODEL)
+    if (model) setSelectedModel(model)
+    
     // Re-check API key status
-    checkApiKeyStatus()
+    await checkApiKeyStatus()
   }
 
   useEffect(() => {

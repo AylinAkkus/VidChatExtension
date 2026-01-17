@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getApiKeys, setApiKey, ApiKeys, Provider, storageGetJson, storageSetJson } from '../../utils/localStorage'
-import { MODELS, ModelId, getModelConfig, hasApiKey } from '../../utils/llm'
+import { MODELS, ModelId, getModelConfig, hasApiKey, autoSelectModel } from '../../utils/llm'
 import './Settings.css'
 
 interface SettingsProps {
@@ -71,15 +71,29 @@ const Settings = ({ onBack }: SettingsProps) => {
   })
 
   useEffect(() => {
-    getApiKeys().then(setKeys)
-    // Get version from manifest
-    chrome.runtime.getManifest && setVersion(chrome.runtime.getManifest().version)
-    // Load selected model
-    storageGetJson<ModelId>(STORAGE_KEY_MODEL).then((model) => {
+    const init = async () => {
+      const keys = await getApiKeys()
+      setKeys(keys)
+      
+      // Get version from manifest
+      chrome.runtime.getManifest && setVersion(chrome.runtime.getManifest().version)
+      
+      // Load selected model
+      const model = await storageGetJson<ModelId>(STORAGE_KEY_MODEL)
       if (model) setSelectedModel(model)
-    })
-    // Check API key status
-    checkApiKeyStatus()
+      
+      // Check API key status
+      await checkApiKeyStatus()
+      
+      // Auto-select model if current one is unavailable
+      const autoSelected = await autoSelectModel(model || undefined)
+      if (autoSelected && autoSelected !== model) {
+        setSelectedModel(autoSelected)
+        await storageSetJson(STORAGE_KEY_MODEL, autoSelected)
+      }
+    }
+    
+    init()
   }, [])
 
   const checkApiKeyStatus = async () => {
@@ -99,8 +113,16 @@ const Settings = ({ onBack }: SettingsProps) => {
       [provider]: value.trim() || undefined,
     }))
     setSaving(null)
+    
     // Re-check API key status
-    checkApiKeyStatus()
+    await checkApiKeyStatus()
+    
+    // Auto-select model if needed
+    const newModel = await autoSelectModel(selectedModel)
+    if (newModel && newModel !== selectedModel) {
+      setSelectedModel(newModel)
+      await storageSetJson(STORAGE_KEY_MODEL, newModel)
+    }
   }
 
   const toggleShowKey = (provider: Provider) => {

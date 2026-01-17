@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { TranscriptSegment } from '../contentScript/youtubeTranscript';
+import { formatTimestamp } from './timestampUtils';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -40,21 +41,6 @@ function formatTranscriptForLLM(transcript: TranscriptSegment[]): string {
     const timestamp = formatTimestamp(segment.start);
     return `[${timestamp}] ${segment.text}`;
   }).join('\n');
-}
-
-/**
- * Format timestamp in seconds to MM:SS or HH:MM:SS format
- */
-function formatTimestamp(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  }
-  
-  return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
 
 const systemPrompt = `You are a helpful AI assistant that answers questions about YouTube videos based on their transcripts and metadata.
@@ -165,38 +151,3 @@ export async function streamChatResponse(
   }
 }
 
-/**
- * Get chat response from LLM based on video transcript and question (non-streaming)
- */
-export async function getChatResponse(
-  transcript: TranscriptSegment[],
-  chatHistory: ChatMessage[],
-  question: string,
-  metadata?: VideoMetadata,
-  model: ModelId = 'gpt-5-mini'
-): Promise<ChatResponse> {
-  try {
-    console.log('💬 Fetching chat response for question:', question);
-
-    const client = getClient();
-    const messages = buildMessages(transcript, chatHistory, question, metadata);
-
-    const response = await client.chat.completions.create({
-      model: model,
-      messages: messages as any,
-    });
-
-    const aiResponse = response.choices[0]?.message?.content || '';
-
-    console.log('✅ Chat response generated');
-
-    return { response: aiResponse };
-  } catch (error) {
-    console.error('❌ Error fetching chat response:', error);
-    return {
-      response: '',
-      error: true,
-      errorMessage: error instanceof Error ? error.message : 'Unknown error occurred',
-    };
-  }
-}

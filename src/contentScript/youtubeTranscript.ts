@@ -11,15 +11,6 @@ export interface TranscriptSegment {
   duration: number; // Duration in seconds
 }
 
-export interface CaptionTrack {
-  baseUrl: string;
-  name: { simpleText: string };
-  vssId: string;
-  languageCode: string;
-  kind?: string; // "asr" for auto-generated
-  isTranslatable: boolean;
-}
-
 export interface VideoMetadata {
   title: string;
   channelName: string;
@@ -45,9 +36,17 @@ export interface TranscriptResult {
 }
 
 /**
+ * Get video ID from current URL
+ */
+function getVideoIdFromUrl(): string | null {
+  const urlParams = new URLSearchParams(window.location.search);
+  return urlParams.get('v');
+}
+
+/**
  * Extract ytInitialPlayerResponse from the YouTube player API
  */
-export function extractYouTubePlayerResponse(): any | null {
+function extractYouTubePlayerResponse(): any | null {
   try {
     // Method 1: Use the player API (most reliable)
     const player = document.querySelector('#movie_player') as any;
@@ -56,7 +55,6 @@ export function extractYouTubePlayerResponse(): any | null {
       try {
         const response = player.getPlayerResponse();
         if (response) {
-          console.log('✅ Got player response from player API');
           return response;
         }
       } catch (e) {
@@ -69,8 +67,6 @@ export function extractYouTubePlayerResponse(): any | null {
     
     for (const script of scripts) {
       const content = script.textContent || '';
-      
-      // Look for ytInitialPlayerResponse variable declaration
       const match = content.match(/var ytInitialPlayerResponse\s*=\s*({.+?});/s);
       if (match) {
         try {
@@ -86,330 +82,9 @@ export function extractYouTubePlayerResponse(): any | null {
       return (window as any).ytInitialPlayerResponse;
     }
 
-    console.warn('Could not find YouTube player response data');
     return null;
   } catch (error) {
     console.error('Error extracting YouTube player response:', error);
-    return null;
-  }
-}
-
-/**
- * Get caption tracks from player response
- */
-export function getCaptionTracks(playerResponse: any): CaptionTrack[] {
-  try {
-    const captions = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-    
-    if (!captions || !Array.isArray(captions)) {
-      return [];
-    }
-
-    return captions;
-  } catch (error) {
-    console.error('Error getting caption tracks:', error);
-    return [];
-  }
-}
-
-/**
- * Select the best caption track
- * Prefers: English manual > other manual > English auto > other auto
- */
-export function selectBestTrack(tracks: CaptionTrack[]): CaptionTrack | null {
-  if (tracks.length === 0) {
-    return null;
-  }
-
-  // Separate manual and auto-generated tracks
-  const manualTracks = tracks.filter(t => t.kind !== 'asr');
-  const autoTracks = tracks.filter(t => t.kind === 'asr');
-
-  // Try to find English manual track first
-  const englishManual = manualTracks.find(t => t.languageCode.startsWith('en'));
-  if (englishManual) {
-    return englishManual;
-  }
-
-  // If no English manual, take any manual track
-  if (manualTracks.length > 0) {
-    return manualTracks[0];
-  }
-
-  // Fall back to English auto-generated
-  const englishAuto = autoTracks.find(t => t.languageCode.startsWith('en'));
-  if (englishAuto) {
-    return englishAuto;
-  }
-
-  // Last resort: any auto-generated track
-  if (autoTracks.length > 0) {
-    return autoTracks[0];
-  }
-
-  // Fallback to first track
-  return tracks[0];
-}
-
-/**
- * Try to fetch transcript via background script (has better permissions)
- */
-async function fetchTranscriptViaPlayer(videoId: string, track: CaptionTrack): Promise<TranscriptSegment[]> {
-  console.log('🔄 Requesting transcript fetch from background script...');
-  
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error('Background fetch timeout'));
-    }, 10000);
-
-    chrome.runtime.sendMessage(
-      {
-        type: 'FETCH_TRANSCRIPT',
-        payload: { url: track.baseUrl }
-      },
-      (response) => {
-        clearTimeout(timeout);
-        
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        
-        if (response && response.success) {
-          try {
-            const data = JSON.parse(response.data);
-            const segments = parseJSON3Format(data);
-            resolve(segments);
-          } catch (e) {
-            reject(new Error(`Failed to parse transcript: ${e}`));
-          }
-        } else {
-          reject(new Error(response?.error || 'Background fetch failed'));
-        }
-      }
-    );
-  });
-}
-
-/**
- * Fetch transcript from YouTube using the track's baseUrl
- * Uses XMLHttpRequest for better compatibility
- */
-export async function fetchTranscript(baseUrl: string): Promise<TranscriptSegment[]> {
-  return new Promise((resolve, reject) => {
-    try {
-      // Decode HTML entities in the URL
-      const decodedUrl = baseUrl.replace(/&amp;/g, '&');
-      
-      console.log('📥 Original baseUrl:', decodedUrl.substring(0, 200));
-      
-      // First, try with fmt=json3
-      let url = decodedUrl;
-      
-      // Check if fmt parameter exists
-      if (url.includes('fmt=')) {
-        // Replace existing fmt with json3
-        url = url.replace(/fmt=[^&]*/, 'fmt=json3');
-        console.log('📝 Replaced existing fmt parameter with json3');
-      } else {
-        // Add fmt=json3
-        url = url.includes('?') ? `${url}&fmt=json3` : `${url}?fmt=json3`;
-        console.log('📝 Added fmt=json3 parameter');
-      }
-
-      console.log('📥 Fetching from:', url.substring(0, 200));
-
-      const xhr = new XMLHttpRequest();
-      xhr.open('GET', url, true);
-      xhr.responseType = 'text';
-      
-      xhr.onload = function() {
-        console.log('📊 XHR status:', xhr.status, xhr.statusText);
-        console.log('📊 Response headers:', xhr.getAllResponseHeaders());
-        console.log('📝 Response length:', xhr.responseText?.length || 0);
-        
-        if (xhr.status >= 200 && xhr.status < 300) {
-          const text = xhr.responseText;
-          
-          if (!text || text.trim().length === 0) {
-            console.error('❌ Empty response! Trying without fmt parameter...');
-            // Try again without modifying the URL
-            fetchTranscriptDirect(decodedUrl).then(resolve).catch(reject);
-            return;
-          }
-
-          console.log('📝 Response preview:', text.substring(0, 300));
-
-          // Check if it's HTML error page
-          if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
-            reject(new Error('Received HTML error page instead of transcript data'));
-            return;
-          }
-
-          // Parse JSON
-          try {
-            const data = JSON.parse(text);
-            const segments = parseJSON3Format(data);
-            resolve(segments);
-          } catch (e) {
-            console.error('Failed to parse JSON:', e, 'Response:', text.substring(0, 500));
-            reject(new Error(`Invalid JSON response: ${e}`));
-          }
-        } else {
-          reject(new Error(`HTTP ${xhr.status}: ${xhr.statusText}`));
-        }
-      };
-      
-      xhr.onerror = function() {
-        console.error('❌ XHR error');
-        reject(new Error('Network error fetching transcript'));
-      };
-      
-      xhr.send();
-    } catch (error) {
-      console.error('Error setting up transcript fetch:', error);
-      reject(error);
-    }
-  });
-}
-
-/**
- * Try fetching transcript directly without modifying URL
- */
-function fetchTranscriptDirect(url: string): Promise<TranscriptSegment[]> {
-  return new Promise((resolve, reject) => {
-    console.log('🔄 Attempting direct fetch without modifications...');
-    
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', url, true);
-    xhr.responseType = 'text';
-    
-    xhr.onload = function() {
-      console.log('📊 Direct fetch status:', xhr.status);
-      console.log('📝 Direct fetch response length:', xhr.responseText?.length || 0);
-      
-      if (xhr.status >= 200 && xhr.status < 300) {
-        const text = xhr.responseText;
-        
-        if (!text || text.trim().length === 0) {
-          reject(new Error('Empty response even with unmodified URL'));
-          return;
-        }
-
-        console.log('📝 Direct response preview:', text.substring(0, 300));
-        
-        // Try parsing as XML (VTT/SRT format) or JSON
-        try {
-          // First try JSON
-          const data = JSON.parse(text);
-          const segments = parseJSON3Format(data);
-          resolve(segments);
-        } catch (jsonError) {
-          // If not JSON, might be XML or other format
-          console.log('Not JSON format, trying to parse as XML/text...');
-          reject(new Error('Non-JSON format not yet supported'));
-        }
-      } else {
-        reject(new Error(`HTTP ${xhr.status}: ${xhr.statusText}`));
-      }
-    };
-    
-    xhr.onerror = function() {
-      reject(new Error('Network error on direct fetch'));
-    };
-    
-    xhr.send();
-  });
-}
-
-/**
- * Parse JSON3 format transcript data
- */
-export function parseJSON3Format(data: any): TranscriptSegment[] {
-  try {
-    if (!data.events || !Array.isArray(data.events)) {
-      throw new Error('Invalid transcript format: missing events array');
-    }
-
-    const segments: TranscriptSegment[] = [];
-
-    for (const event of data.events) {
-      // Each event may have segments (segs) which contain the actual text
-      if (event.segs && Array.isArray(event.segs)) {
-        const text = event.segs
-          .map((seg: any) => seg.utf8 || '')
-          .join('')
-          .replace(/\n/g, ' ')
-          .trim();
-
-        if (text && event.tStartMs !== undefined) {
-          segments.push({
-            text,
-            start: event.tStartMs / 1000, // Convert milliseconds to seconds
-            duration: (event.dDurationMs || 0) / 1000,
-          });
-        }
-      }
-    }
-
-    return segments;
-  } catch (error) {
-    console.error('Error parsing JSON3 format:', error);
-    throw error;
-  }
-}
-
-/**
- * Get video ID from current URL
- */
-export function getVideoIdFromUrl(): string | null {
-  const urlParams = new URLSearchParams(window.location.search);
-  return urlParams.get('v');
-}
-
-/**
- * Extract video metadata from YouTube page
- */
-export function extractVideoMetadata(): VideoMetadata | null {
-  try {
-    // Try to get from player response first
-    const playerResponse = extractYouTubePlayerResponse();
-    
-    if (playerResponse?.videoDetails) {
-      const details = playerResponse.videoDetails;
-      
-      const metadata = {
-        title: details.title || 'Unknown Title',
-        channelName: details.author || 'Unknown Channel',
-        channelId: details.channelId,
-        description: details.shortDescription || '',
-        viewCount: details.viewCount || '0',
-        duration: details.lengthSeconds ? formatDuration(parseInt(details.lengthSeconds)) : undefined,
-        videoThumbnail: details.thumbnail?.thumbnails?.[0]?.url,
-      };
-      
-      console.log('📊 Extracted metadata from playerResponse:', {
-        title: metadata.title,
-        channelName: metadata.channelName,
-        videoId: details.videoId
-      });
-      
-      return metadata;
-    }
-    
-    // Fallback: Try to extract from page elements
-    console.log('⚠️ PlayerResponse not available, falling back to DOM extraction');
-    const titleElement = document.querySelector('h1.ytd-video-primary-info-renderer yt-formatted-string, h1.ytd-watch-metadata yt-formatted-string');
-    const channelElement = document.querySelector('ytd-channel-name a, #channel-name a');
-    const descriptionElement = document.querySelector('ytd-expandable-video-description-body-renderer, #description-inner');
-    
-    return {
-      title: titleElement?.textContent?.trim() || 'Unknown Title',
-      channelName: channelElement?.textContent?.trim() || 'Unknown Channel',
-      description: descriptionElement?.textContent?.trim() || '',
-    };
-  } catch (error) {
-    console.error('Error extracting video metadata:', error);
     return null;
   }
 }
@@ -429,6 +104,43 @@ function formatDuration(seconds: number): string {
 }
 
 /**
+ * Extract video metadata from YouTube page
+ */
+function extractVideoMetadata(): VideoMetadata | null {
+  try {
+    const playerResponse = extractYouTubePlayerResponse();
+    
+    if (playerResponse?.videoDetails) {
+      const details = playerResponse.videoDetails;
+      
+      return {
+        title: details.title || 'Unknown Title',
+        channelName: details.author || 'Unknown Channel',
+        channelId: details.channelId,
+        description: details.shortDescription || '',
+        viewCount: details.viewCount || '0',
+        duration: details.lengthSeconds ? formatDuration(parseInt(details.lengthSeconds)) : undefined,
+        videoThumbnail: details.thumbnail?.thumbnails?.[0]?.url,
+      };
+    }
+    
+    // Fallback: Try to extract from page elements
+    const titleElement = document.querySelector('h1.ytd-video-primary-info-renderer yt-formatted-string, h1.ytd-watch-metadata yt-formatted-string');
+    const channelElement = document.querySelector('ytd-channel-name a, #channel-name a');
+    const descriptionElement = document.querySelector('ytd-expandable-video-description-body-renderer, #description-inner');
+    
+    return {
+      title: titleElement?.textContent?.trim() || 'Unknown Title',
+      channelName: channelElement?.textContent?.trim() || 'Unknown Channel',
+      description: descriptionElement?.textContent?.trim() || '',
+    };
+  } catch (error) {
+    console.error('Error extracting video metadata:', error);
+    return null;
+  }
+}
+
+/**
  * Main function to extract transcript for current YouTube video
  * Uses youtube-caption-extractor library for reliable fetching
  */
@@ -445,7 +157,6 @@ export async function extractVideoTranscript(): Promise<TranscriptResult> {
 
     console.log('🎬 Extracting transcript for video:', videoId);
 
-    // Use youtube-caption-extractor library
     const subtitles = await getSubtitles({ videoID: videoId, lang: 'en' });
     
     if (!subtitles || subtitles.length === 0) {
@@ -457,20 +168,13 @@ export async function extractVideoTranscript(): Promise<TranscriptResult> {
 
     console.log('✅ Transcript fetched:', subtitles.length, 'segments');
 
-    // Convert to our TranscriptSegment format
     const transcript: TranscriptSegment[] = subtitles.map((sub: any) => ({
       text: sub.text,
       start: sub.start,
       duration: sub.dur || 0,
     }));
 
-    // Extract video metadata
     const metadata = extractVideoMetadata();
-    console.log('📊 Final metadata for video', videoId, ':', {
-      title: metadata?.title,
-      channelName: metadata?.channelName,
-      description: metadata?.description?.substring(0, 50) + '...',
-    });
 
     return {
       success: true,
@@ -480,7 +184,7 @@ export async function extractVideoTranscript(): Promise<TranscriptResult> {
       videoThumbnail: metadata?.videoThumbnail,
       metadata: metadata ?? undefined,
       language: 'en',
-      isAutoGenerated: true, // Library doesn't distinguish, assume auto-generated
+      isAutoGenerated: true,
     };
   } catch (error) {
     console.error('❌ Error extracting video transcript:', error);
@@ -490,19 +194,3 @@ export async function extractVideoTranscript(): Promise<TranscriptResult> {
     };
   }
 }
-
-/**
- * Format timestamp in seconds to MM:SS or HH:MM:SS format
- */
-export function formatTimestamp(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  }
-  
-  return `${minutes}:${secs.toString().padStart(2, '0')}`;
-}
-

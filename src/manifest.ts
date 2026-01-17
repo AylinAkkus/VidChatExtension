@@ -1,6 +1,5 @@
 import { defineManifest } from '@crxjs/vite-plugin'
 import packageData from '../package.json'
-// import { getI18nTextEmulation } from './utils/i18n'
 
 const isDev: boolean = process.env.NODE_ENV == 'development'
 
@@ -18,8 +17,6 @@ export default defineManifest({
   },
   action: {
     default_icon: 'public/img/icon-48.png',
-    // default_icon: 'img/logo.png',
-    //default_popup: 'popup.html'
   },
   background: {
     service_worker: 'src/background/index.ts',

@@ -62,10 +62,7 @@ class TabsController {
   }
 }
 
-const tabsController: TabsController = new TabsController()
-
-// Export for use by other modules
-export { tabsController }
+const tabsController = new TabsController()
 
 /**
  * Listen for content script init message to track auto-injected scripts
@@ -89,9 +86,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
  *
  */
 const contentScriptFile1 = chrome.runtime.getManifest()?.content_scripts?.[0].js
-// const contentScriptFile2 = chrome.runtime.getManifest()?.content_scripts?.[1].js
 tabsController.setContentScriptFiles(contentScriptFile1)
-// tabsController.setContentScriptFiles(contentScriptFile2)
 
 /**
  * Check if URL is a YouTube page where we want our content script

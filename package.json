@@ -1,7 +1,7 @@
 {
-  "name": "ask-the-video",
+  "name": "VidChat",
   "version": "0.0.1",
-  "author": "no one",
+  "author": "Mert Unsal, Aylin Akkus",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -17,7 +17,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "fmt": "prettier --write '**/*.{tsx,ts,json,css,scss,md}'",
-    "zip": "npm run build && node src/zip.js"
+    "zip": "npm run build && cd build && zip -r ../extension.zip ."
   },
   "dependencies": {
     "@mantine/core": "^8.3.3",
@@ -36,8 +36,6 @@
     "@types/react": "^19.1.14",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.3",
-    "gulp": "^5.0.1",
-    "gulp-zip": "^6.1.0",
     "prettier": "^3.6.2",
     "typescript": "^5.9.2",
     "vite": "^7.1.7"

@@ -282,34 +282,3 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     // Side panel might not be open
   })
 })
-
-// Export helper function to get transcript for current tab
-export function getTranscriptForCurrentTab(): Promise<TranscriptResult | null> {
-  return new Promise((resolve) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tabId = tabs[0]?.id
-      
-      if (tabId && transcriptStore.has(tabId)) {
-        resolve(transcriptStore.get(tabId) || null)
-      } else {
-        resolve(null)
-      }
-    })
-  })
-}
-
-// Export helper function to get chat history for current tab
-export function getChatHistoryForCurrentTab(): Promise<ChatMessage[]> {
-  return new Promise((resolve) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tabId = tabs[0]?.id
-      
-      if (tabId && chatHistoryStore.has(tabId)) {
-        resolve(chatHistoryStore.get(tabId) || [])
-      } else {
-        resolve([])
-      }
-    })
-  })
-}
-

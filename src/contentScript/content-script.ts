@@ -49,8 +49,8 @@ function updateButtonPosition() {
   if (!askAiButton) return
   
   const hasOverlay = isInfoOverlayVisible()
-  // Move left when overlay is present (give ~60px clearance)
-  askAiButton.style.right = hasOverlay ? '76px' : '16px'
+  // Move down when overlay is present (below the info button)
+  askAiButton.style.top = hasOverlay ? '56px' : '16px'
 }
 
 /**
@@ -196,9 +196,10 @@ function injectAskAiButton() {
   // Inline styles - dark glassmorphism that fits YouTube
   Object.assign(btn.style, {
     position: 'absolute',
-    top: '16px',
-    right: hasOverlay ? '76px' : '16px',
-    zIndex: '2000',
+    top: hasOverlay ? '56px' : '16px',
+    right: '16px',
+    zIndex: '2147483647', // Max z-index to ensure we're on top
+    pointerEvents: 'auto', // Ensure clicks register
     padding: '8px 14px 8px 12px',
     fontSize: '14px',
     fontWeight: '600',

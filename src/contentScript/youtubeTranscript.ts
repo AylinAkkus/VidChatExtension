@@ -44,46 +44,38 @@ function getVideoIdFromUrl(): string | null {
 }
 
 /**
- * Extract ytInitialPlayerResponse from the YouTube player API
+ * Extract video metadata directly from DOM elements
+ * This is the most reliable method during YouTube's SPA navigation
  */
-function extractYouTubePlayerResponse(): any | null {
+function extractVideoMetadataFromDOM(): VideoMetadata | null {
+  console.log('[VidChat Debug] === Extracting Video Metadata from DOM ===');
+  
   try {
-    // Method 1: Use the player API (most reliable)
-    const player = document.querySelector('#movie_player') as any;
+    const titleElement = document.querySelector('h1.ytd-video-primary-info-renderer yt-formatted-string, h1.ytd-watch-metadata yt-formatted-string');
+    const channelElement = document.querySelector('ytd-channel-name a, #channel-name a');
+    const descriptionElement = document.querySelector('ytd-expandable-video-description-body-renderer, #description-inner');
     
-    if (player && typeof player.getPlayerResponse === 'function') {
-      try {
-        const response = player.getPlayerResponse();
-        if (response) {
-          return response;
-        }
-      } catch (e) {
-        // Failed to get player response from API
-      }
+    const title = titleElement?.textContent?.trim();
+    const channelName = channelElement?.textContent?.trim();
+    const description = descriptionElement?.textContent?.trim();
+    
+    console.log('[VidChat Debug] DOM - Title element found:', !!titleElement);
+    console.log('[VidChat Debug] DOM - Title:', title);
+    console.log('[VidChat Debug] DOM - Channel:', channelName);
+    
+    if (!title || title === '') {
+      console.log('[VidChat Debug] ❌ No title found in DOM');
+      return null;
     }
     
-    // Method 2: Look for ytInitialPlayerResponse in script tags (fallback)
-    const scripts = document.querySelectorAll('script');
-    
-    for (const script of scripts) {
-      const content = script.textContent || '';
-      const match = content.match(/var ytInitialPlayerResponse\s*=\s*({.+?});/s);
-      if (match) {
-        try {
-          return JSON.parse(match[1]);
-        } catch (e) {
-          // Failed to parse ytInitialPlayerResponse
-        }
-      }
-    }
-
-    // Method 3: Check if it's available on window object (fallback)
-    if ((window as any).ytInitialPlayerResponse) {
-      return (window as any).ytInitialPlayerResponse;
-    }
-
-    return null;
+    console.log('[VidChat Debug] ✅ Successfully extracted metadata from DOM');
+    return {
+      title,
+      channelName: channelName || 'YouTube',
+      description: description || '',
+    };
   } catch (error) {
+    console.log('[VidChat Debug] ❌ Error extracting from DOM:', error);
     return null;
   }
 }
@@ -103,48 +95,51 @@ function formatDuration(seconds: number): string {
 }
 
 /**
- * Extract video metadata from YouTube page
+ * Extract video metadata with retry logic for DOM elements
+ * Retries with delays to give YouTube's SPA time to update the DOM
  */
-function extractVideoMetadata(): VideoMetadata | null {
-  try {
-    const playerResponse = extractYouTubePlayerResponse();
-    
-    if (playerResponse?.videoDetails) {
-      const details = playerResponse.videoDetails;
-      
-      return {
-        title: details.title || 'Unknown Title',
-        channelName: details.author || 'Unknown Channel',
-        channelId: details.channelId,
-        description: details.shortDescription || '',
-        viewCount: details.viewCount || '0',
-        duration: details.lengthSeconds ? formatDuration(parseInt(details.lengthSeconds)) : undefined,
-        videoThumbnail: details.thumbnail?.thumbnails?.[0]?.url,
-      };
+async function extractVideoMetadataWithRetry(expectedVideoId: string, maxRetries = 3): Promise<VideoMetadata | null> {
+  console.log('[VidChat Debug] === Extracting Video Metadata (with retry) ===');
+  console.log('[VidChat Debug] Expected VideoId:', expectedVideoId);
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    if (attempt > 0) {
+      console.log(`[VidChat Debug] Retry attempt ${attempt + 1}/${maxRetries}...`);
+      // Wait between retries to let YouTube's SPA update the DOM
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
     
-    // Fallback: Try to extract from page elements
-    const titleElement = document.querySelector('h1.ytd-video-primary-info-renderer yt-formatted-string, h1.ytd-watch-metadata yt-formatted-string');
-    const channelElement = document.querySelector('ytd-channel-name a, #channel-name a');
-    const descriptionElement = document.querySelector('ytd-expandable-video-description-body-renderer, #description-inner');
+    const metadata = extractVideoMetadataFromDOM();
     
-    return {
-      title: titleElement?.textContent?.trim() || 'Unknown Title',
-      channelName: channelElement?.textContent?.trim() || 'Unknown Channel',
-      description: descriptionElement?.textContent?.trim() || '',
-    };
-  } catch (error) {
-    return null;
+    if (metadata && metadata.title && metadata.title !== '') {
+      console.log('[VidChat Debug] ✅ Successfully extracted metadata');
+      return metadata;
+    }
+    
+    console.log('[VidChat Debug] DOM not ready yet or no title found, will retry...');
   }
+  
+  // All retries exhausted - return minimal metadata
+  console.log('[VidChat Debug] ⚠️ All retry attempts exhausted, returning minimal metadata');
+  return {
+    title: 'Video',
+    channelName: 'YouTube',
+    description: '',
+  };
 }
 
 /**
  * Main function to extract transcript for current YouTube video
  * Uses youtube-caption-extractor library for reliable fetching
+ * Now with retry logic for metadata extraction during SPA navigation
  */
 export async function extractVideoTranscript(): Promise<TranscriptResult> {
   try {
     const videoId = getVideoIdFromUrl();
+    console.log('[VidChat Debug] ====================================');
+    console.log('[VidChat Debug] STARTING TRANSCRIPT EXTRACTION');
+    console.log('[VidChat Debug] URL VideoId:', videoId);
+    console.log('[VidChat Debug] ====================================');
     
     if (!videoId) {
       return {
@@ -153,6 +148,7 @@ export async function extractVideoTranscript(): Promise<TranscriptResult> {
       };
     }
 
+    console.log('[VidChat Debug] Fetching subtitles from YouTube API for videoId:', videoId);
     const subtitles = await getSubtitles({ videoID: videoId, lang: 'en' });
     
     if (!subtitles || subtitles.length === 0) {
@@ -162,25 +158,40 @@ export async function extractVideoTranscript(): Promise<TranscriptResult> {
       };
     }
 
+    console.log('[VidChat Debug] ✅ Subtitles fetched successfully, segments:', subtitles.length);
+
     const transcript: TranscriptSegment[] = subtitles.map((sub: any) => ({
       text: sub.text,
       start: sub.start,
       duration: sub.dur || 0,
     }));
 
-    const metadata = extractVideoMetadata();
+    // Use retry logic to wait for YouTube's SPA to update metadata
+    console.log('[VidChat Debug] Extracting metadata with retry logic...');
+    const metadata = await extractVideoMetadataWithRetry(videoId);
 
-    return {
+    const result = {
       success: true,
       transcript,
       videoId,
-      videoTitle: metadata?.title || 'Unknown Video',
+      videoTitle: metadata?.title || 'Video',
       videoThumbnail: metadata?.videoThumbnail,
       metadata: metadata ?? undefined,
       language: 'en',
       isAutoGenerated: true,
     };
+
+    console.log('[VidChat Debug] ====================================');
+    console.log('[VidChat Debug] FINAL RESULT:');
+    console.log('[VidChat Debug] VideoId:', result.videoId);
+    console.log('[VidChat Debug] VideoTitle:', result.videoTitle);
+    console.log('[VidChat Debug] Metadata Title:', result.metadata?.title);
+    console.log('[VidChat Debug] VideoId matches metadata:', result.videoId === videoId ? '✅ CORRECT' : '❌ MISMATCH');
+    console.log('[VidChat Debug] ====================================');
+
+    return result;
   } catch (error) {
+    console.log('[VidChat Debug] ❌ ERROR in extractVideoTranscript:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error occurred',

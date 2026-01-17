@@ -30,8 +30,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case WorkerMessageTypes.navigationStarted:
       // Content script detected navigation to a video page, transcript loading
       if (tabId) {
-        console.log('🚀 Navigation started for tab:', tabId, 'videoId:', message.payload?.videoId)
-        
         pageStateStore.set(tabId, {
           pageState: 'loading',
           videoId: message.payload?.videoId,
@@ -48,8 +46,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case WorkerMessageTypes.noVideoPage:
       // Content script detected navigation away from video page
       if (tabId) {
-        console.log('📤 No video page for tab:', tabId)
-        
         pageStateStore.set(tabId, { pageState: 'no_video' })
         transcriptStore.delete(tabId)
         
@@ -63,19 +59,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case WorkerMessageTypes.transcriptLoaded:
       // Content script has loaded a transcript
       if (tabId) {
-        console.log('📋 Transcript loaded for tab:', tabId, {
-          videoId: message.payload.videoId,
-          title: message.payload.metadata?.title,
-          segmentCount: message.payload.transcript?.length,
-        })
-        
         // Check if this is a new video (different videoId)
         const previousTranscript = transcriptStore.get(tabId)
         const isNewVideo = previousTranscript?.videoId !== message.payload.videoId
-        
-        if (isNewVideo) {
-          console.log('🔄 Background: NEW VIDEO! Old:', previousTranscript?.videoId, 'New:', message.payload.videoId)
-        }
         
         transcriptStore.set(tabId, message.payload)
         pageStateStore.set(tabId, {
@@ -86,12 +72,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         
         // Clear chat history if navigating to a new video
         if (isNewVideo && chatHistoryStore.has(tabId)) {
-          console.log('🧹 Background: Clearing chat history for tab:', tabId)
           chatHistoryStore.delete(tabId)
         }
         
         // Notify side panel if it's open
-        console.log('📤 Background: Forwarding transcript to side panel')
         chrome.runtime.sendMessage({
           type: WorkerMessageTypes.transcriptLoaded,
           payload: message.payload,
@@ -102,8 +86,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break
 
     case WorkerMessageTypes.transcriptError:
-      console.error('❌ Transcript error:', message.payload)
-      
       if (tabId) {
         pageStateStore.set(tabId, {
           pageState: 'error',
@@ -130,7 +112,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (currentTabId && pageStateStore.has(currentTabId)) {
           const state = pageStateStore.get(currentTabId)!
           const transcript = transcriptStore.get(currentTabId)
-          console.log('📤 Background: returning cached state for tab:', currentTabId, state.pageState)
           sendResponse({
             ...state,
             transcript: transcript || null,
@@ -140,13 +121,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         
         // No cached state - try to query content script directly
         if (currentTabId && currentTab?.url?.includes('youtube.com/watch')) {
-          console.log('📤 Background: no cached state, querying content script for tab:', currentTabId)
           try {
             const contentResponse = await chrome.tabs.sendMessage(currentTabId, { 
               type: WorkerMessageTypes.tabStateRequest 
             })
             if (contentResponse) {
-              console.log('📤 Background: got response from content script:', contentResponse)
               // Cache the state
               pageStateStore.set(currentTabId, {
                 pageState: contentResponse.pageState,
@@ -160,12 +139,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               return
             }
           } catch (e) {
-            console.log('📤 Background: content script not responding, tab:', currentTabId)
+            // Content script not responding
           }
         }
         
         // No state available
-        console.log('📤 Background: no state available for tab:', currentTabId)
         sendResponse({ pageState: 'no_video' })
       })
       return true
@@ -239,7 +217,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // Notify side panel when user switches tabs
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   const tabId = activeInfo.tabId
-  console.log('🔀 Tab activated:', tabId)
   
   let state = pageStateStore.get(tabId)
   let transcript = transcriptStore.get(tabId)
@@ -249,7 +226,6 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     try {
       const tab = await chrome.tabs.get(tabId)
       if (tab.url?.includes('youtube.com/watch')) {
-        console.log('🔀 No cached state for tab, querying content script')
         const response = await chrome.tabs.sendMessage(tabId, { 
           type: WorkerMessageTypes.tabStateRequest 
         })
@@ -267,7 +243,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
         }
       }
     } catch (e) {
-      console.log('🔀 Could not query content script for tab:', tabId)
+      // Could not query content script
     }
   }
   

@@ -11,8 +11,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const isOpen = sidePanelOpen.get(windowId) ?? false
       if (isOpen) {
         // Panel is open - close it
-        console.log('🔄 Side panel open, closing...')
-        // Tell side panel to close itself
         chrome.runtime.sendMessage({ type: 'closeSidePanel' }).catch(() => {})
         sidePanelOpen.set(windowId, false)
       } else {

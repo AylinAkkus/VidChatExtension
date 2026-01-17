@@ -44,7 +44,7 @@ export const getModelConfig = (modelId: ModelId): ModelConfig => {
 };
 
 const getOpenAIClient = async (): Promise<OpenAI> => {
-  const apiKey = (await getApiKey('openai')) || import.meta.env.VITE_OPENAI_API_KEY;
+  const apiKey = await getApiKey('openai');
   if (!apiKey) {
     throw new Error('OpenAI API key not configured. Please add your API key in Settings.');
   }
@@ -52,7 +52,7 @@ const getOpenAIClient = async (): Promise<OpenAI> => {
 };
 
 const getGoogleClient = async (): Promise<GoogleGenerativeAI> => {
-  const apiKey = (await getApiKey('google')) || import.meta.env.VITE_GOOGLE_API_KEY;
+  const apiKey = await getApiKey('google');
   if (!apiKey) {
     throw new Error('Google API key not configured. Please add your API key in Settings.');
   }
@@ -60,7 +60,7 @@ const getGoogleClient = async (): Promise<GoogleGenerativeAI> => {
 };
 
 const getAnthropicClient = async (): Promise<Anthropic> => {
-  const apiKey = (await getApiKey('anthropic')) || import.meta.env.VITE_ANTHROPIC_API_KEY;
+  const apiKey = await getApiKey('anthropic');
   if (!apiKey) {
     throw new Error('Anthropic API key not configured. Please add your API key in Settings.');
   }
@@ -241,8 +241,6 @@ export async function streamChatResponse(
   model: ModelId = 'gemini-3-flash-preview'
 ): Promise<ChatResponse> {
   try {
-    console.log('💬 Streaming chat response for question:', question);
-
     const messages = buildMessages(transcript, chatHistory, question, metadata);
     const modelConfig = getModelConfig(model);
 
@@ -262,10 +260,8 @@ export async function streamChatResponse(
         throw new Error(`Unknown provider: ${modelConfig.provider}`);
     }
 
-    console.log('✅ Chat response streamed');
     return { response: fullResponse };
   } catch (error) {
-    console.error('❌ Error streaming chat response:', error);
     return {
       response: '',
       error: true,
@@ -277,17 +273,5 @@ export async function streamChatResponse(
 // Check if a provider has an API key configured
 export async function hasApiKey(provider: Provider): Promise<boolean> {
   const key = await getApiKey(provider);
-  if (key) return true;
-
-  // Fall back to env vars for development
-  switch (provider) {
-    case 'openai':
-      return !!import.meta.env.VITE_OPENAI_API_KEY;
-    case 'google':
-      return !!import.meta.env.VITE_GOOGLE_API_KEY;
-    case 'anthropic':
-      return !!import.meta.env.VITE_ANTHROPIC_API_KEY;
-    default:
-      return false;
-  }
+  return !!key;
 }

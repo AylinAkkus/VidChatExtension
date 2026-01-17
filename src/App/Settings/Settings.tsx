@@ -46,9 +46,12 @@ const Settings = ({ onBack }: SettingsProps) => {
     google: false,
     anthropic: false,
   })
+  const [version, setVersion] = useState<string>('1.0.0')
 
   useEffect(() => {
     getApiKeys().then(setKeys)
+    // Get version from manifest
+    chrome.runtime.getManifest && setVersion(chrome.runtime.getManifest().version)
   }, [])
 
   const handleSave = async (provider: Provider, value: string) => {
@@ -147,7 +150,7 @@ const Settings = ({ onBack }: SettingsProps) => {
           <p>
             VidChat lets you chat with YouTube videos using AI. Your API keys are stored locally and never sent to our servers.
           </p>
-          <p className="settings-version">Version 1.0.0</p>
+          <p className="settings-version">Version {version}</p>
         </div>
       </div>
     </div>

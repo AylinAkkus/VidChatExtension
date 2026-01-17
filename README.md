@@ -4,20 +4,18 @@ Chat with any YouTube video using AI. Ask questions and get answers with clickab
 
 ## Features
 
+- **Multi-provider AI support** — Choose from OpenAI (GPT-5), Google (Gemini 3), or Anthropic (Claude 4.5)
 - **Transcript-based Q&A** — AI answers questions using the video's captions
 - **Clickable timestamps** — Jump to referenced moments in the video
 - **Streaming responses** — Real-time response generation
 - **Chat persistence** — Conversations saved locally, switchable from menu
-- **Model selection** — Choose between GPT-5.2 and GPT-5 Mini
+- **Model selection** — Switch between models from any supported provider
 
 ## Setup
 
 ```bash
 # Install dependencies
 npm install
-
-# Create env file with your OpenAI API key
-echo "VITE_OPENAI_API_KEY=sk-..." > .env.local
 
 # Build extension
 npm run build
@@ -28,25 +26,36 @@ Load the `build` folder as an unpacked extension in Chrome (`chrome://extensions
 ## Usage
 
 1. Navigate to any YouTube video
-2. Click the extension icon to open the side panel
-3. Wait for transcript to load (green indicator)
-4. Ask questions about the video
+2. Click the "Ask AI" button on the video player (or the extension icon)
+3. Open Settings and add your API key for at least one provider
+4. Wait for transcript to load
+5. Ask questions about the video
+
+## Supported Models
+
+| Provider | Models |
+|----------|--------|
+| OpenAI | GPT-5 Mini, GPT-5.2 |
+| Google | Gemini 3 Flash, Gemini 3 Pro |
+| Anthropic | Claude Sonnet 4.5, Claude Opus 4.5 |
 
 ## Architecture
 
 ```
 src/
 ├── contentScript/     # Runs on YouTube pages
-│   ├── content-script.ts    # Video detection, timestamp seeking
+│   ├── content-script.ts    # Video detection, button injection, timestamp seeking
 │   └── youtubeTranscript.ts # Transcript extraction via youtube-caption-extractor
 ├── background/        # Service worker
 │   ├── index.ts             # Entry point
 │   ├── side-panel.ts        # Panel toggle handling
 │   └── transcript-handler.ts # State management between tabs/panel
-├── App/VideoChat/     # Side panel UI (React)
-│   └── VideoChat.tsx        # Chat interface, history, model selection
+├── App/               # Side panel UI (React)
+│   ├── VideoChat/           # Chat interface, history, model selection
+│   └── Settings/            # API key management
 └── utils/
-    ├── llm.ts               # OpenAI streaming integration
+    ├── llm.ts               # Multi-provider LLM streaming integration
+    ├── localStorage.ts      # Chrome storage wrapper, API key storage
     └── timestampUtils.tsx   # Parse [MM:SS] links in responses
 ```
 
@@ -61,13 +70,13 @@ Caption priority: English manual → any manual → English auto-generated → a
 - **React 18** + **TypeScript**
 - **Mantine UI 8** — Component library
 - **Vite 7** + **@crxjs/vite-plugin** — Build tooling
-- **OpenAI SDK** — Chat completions with streaming
+- **OpenAI SDK**, **Google Generative AI SDK**, **Anthropic SDK** — LLM providers
 - **Chrome Extension Manifest V3**
 
 ## Requirements
 
 - Node.js >= 22
-- OpenAI API key
+- API key for at least one provider (OpenAI, Google, or Anthropic)
 
 ## License
 

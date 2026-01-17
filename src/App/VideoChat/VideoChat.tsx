@@ -209,7 +209,6 @@ const VideoChat = () => {
     const handleMessage = (message: { type: string; payload?: any }) => {
       switch (message.type) {
         case WorkerMessageTypes.navigationStarted:
-          console.log('📥 Side panel: navigationStarted', message.payload)
           const newVideoId = message.payload?.videoId
           const isNewVideo = newVideoId && newVideoId !== currentVideoIdRef.current
           
@@ -226,14 +225,12 @@ const VideoChat = () => {
           }
           
           if (isNewVideo) {
-            console.log('📥 Clearing chat - new video:', newVideoId, 'was:', currentVideoIdRef.current)
             setChatHistory([])
             setCurrentChatId(null)
           }
           break
           
         case WorkerMessageTypes.noVideoPage:
-          console.log('📥 Side panel: noVideoPage')
           setPageState('no_video')
           setTranscript(null)
           setVideoInfo(null)
@@ -241,12 +238,10 @@ const VideoChat = () => {
           break
           
         case WorkerMessageTypes.transcriptLoaded:
-          console.log('📥 Side panel: transcriptLoaded', message.payload?.videoId)
           const data: TranscriptResult = message.payload
           const transcriptIsNewVideo = data.videoId && data.videoId !== currentVideoIdRef.current
           
           if (transcriptIsNewVideo) {
-            console.log('📥 Transcript for new video, clearing chat')
             setChatHistory([])
             setCurrentChatId(null)
           }
@@ -265,14 +260,12 @@ const VideoChat = () => {
           break
           
         case WorkerMessageTypes.transcriptError:
-          console.log('📥 Side panel: transcriptError', message.payload)
           setErrorMessage(message.payload?.error || 'Failed to load transcript')
           setPageState('error')
           break
           
         case 'tabActivated':
         case 'refreshState':
-          console.log('📥 Side panel:', message.type, message.payload)
           const tabState = message.payload
           const tabVideoId = tabState.transcript?.videoId || tabState.videoId
           const tabIsNewVideo = tabVideoId && tabVideoId !== currentVideoIdRef.current

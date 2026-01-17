@@ -160,7 +160,7 @@ async function maybeShowOnboardingHint(btn: HTMLElement, playerContainer: HTMLEl
     setTimeout(cleanup, 8000)
     
   } catch (e) {
-    console.warn('Could not show onboarding hint:', e)
+    // Silently fail onboarding hint
   }
 }
 
@@ -243,8 +243,6 @@ function injectAskAiButton() {
   
   // Show one-time onboarding hint for new users
   maybeShowOnboardingHint(btn, playerContainer)
-  
-  console.log('✨ Ask AI button injected')
 }
 
 /**
@@ -281,27 +279,15 @@ async function extractAndSendTranscript(extractionId: number) {
   try {
     const videoId = getVideoId()
     
-    console.log('🔍 extractAndSendTranscript called:', {
-      extractionId,
-      currentExtractionId: pendingExtractionId,
-      urlVideoId: videoId,
-      cachedVideoId: currentVideoId,
-      hasCache: !!transcriptCache,
-    })
-    
     // Abort if this extraction was superseded by a newer one
     if (extractionId !== pendingExtractionId) {
-      console.log('⏭️ Skipping stale extraction:', extractionId, 'current:', pendingExtractionId)
       return
     }
     
     // Don't re-fetch if we already have this video's transcript
     if (videoId === currentVideoId && transcriptCache) {
-      console.log('📋 Using cached transcript for video:', videoId)
       return
     }
-
-    console.log('🎬 Extracting FRESH transcript for video:', videoId)
     
     // Extract transcript
     const result = await extractVideoTranscript()
@@ -309,17 +295,14 @@ async function extractAndSendTranscript(extractionId: number) {
     // CRITICAL: Check again after async work - URL might have changed
     const currentUrlVideoId = getVideoId()
     if (extractionId !== pendingExtractionId) {
-      console.log('⏭️ Extraction completed but superseded:', extractionId, 'current:', pendingExtractionId)
       return
     }
     if (currentUrlVideoId !== videoId) {
-      console.log('⏭️ URL changed during extraction. Expected:', videoId, 'Got:', currentUrlVideoId)
       return
     }
     
     // Also verify the extracted transcript matches what we requested
     if (result.success && result.videoId && result.videoId !== videoId) {
-      console.log('⚠️ Transcript videoId mismatch! URL:', videoId, 'Transcript:', result.videoId)
       // Don't cache mismatched data - trigger a retry
       return
     }
@@ -329,26 +312,17 @@ async function extractAndSendTranscript(extractionId: number) {
     transcriptCache = result
 
     if (result.success) {
-      console.log('✅ Transcript extracted successfully:', {
-        videoId: result.videoId,
-        title: result.metadata?.title,
-        channel: result.metadata?.channelName,
-        segmentCount: result.transcript?.length,
-      })
-      console.log('📤 Sending transcript to background script')
       chrome.runtime.sendMessage({
         type: WorkerMessageTypes.transcriptLoaded,
         payload: result,
       })
     } else {
-      console.warn('❌ Transcript extraction failed:', result.error)
       chrome.runtime.sendMessage({
         type: WorkerMessageTypes.transcriptError,
         payload: { error: result.error },
       })
     }
   } catch (error) {
-    console.error('Error in extractAndSendTranscript:', error)
     chrome.runtime.sendMessage({
       type: WorkerMessageTypes.transcriptError,
       payload: { error: error instanceof Error ? error.message : 'Unknown error' },
@@ -360,14 +334,11 @@ async function extractAndSendTranscript(extractionId: number) {
  * Initialize content script for YouTube video pages
  */
 const initializeContentScript = () => {
-  console.log('🎬 YouTube transcript extension initialized')
-  
   chrome.runtime.sendMessage({ type: WorkerMessageTypes.sidebarLoaded, payload: true })
 
   if (isYouTubeVideoPage()) {
     // Immediately notify that we're on a video page and loading
     const videoId = getVideoId()
-    console.log('📤 Initial navigationStarted for video:', videoId)
     chrome.runtime.sendMessage({
       type: WorkerMessageTypes.navigationStarted,
       payload: { videoId },
@@ -401,18 +372,15 @@ new MutationObserver(() => {
   const url = location.href
   if (url !== lastUrl) {
     lastUrl = url
-    console.log('🔄 URL changed:', url)
     
     if (isYouTubeVideoPage()) {
       // Clear previous cache immediately on navigation
-      console.log('🧹 Clearing cache due to URL change')
       currentVideoId = null
       transcriptCache = null
       removeAskAiButton()
       
       // Immediately notify that we're loading a new video
       const newVideoId = getVideoId()
-      console.log('📤 Sending navigationStarted for video:', newVideoId)
       chrome.runtime.sendMessage({
         type: WorkerMessageTypes.navigationStarted,
         payload: { videoId: newVideoId },
@@ -420,17 +388,14 @@ new MutationObserver(() => {
       
       // Invalidate any pending extractions and start a new one
       const extractionId = ++pendingExtractionId
-      console.log('🔄 New extraction ID:', extractionId, 'for video:', newVideoId)
       
       // Wait longer for YouTube to fully load the new video page
       setTimeout(() => {
-        console.log('⏰ Timeout elapsed, extracting transcript for video:', newVideoId, 'extractionId:', extractionId)
         extractAndSendTranscript(extractionId)
         injectAskAiButton()
       }, 2500)
     } else {
       // Clear cache if we navigate away from video page
-      console.log('📤 Navigated away from video page, sending noVideoPage')
       currentVideoId = null
       transcriptCache = null
       removeAskAiButton()
@@ -455,12 +420,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   } else if (message.type === WorkerMessageTypes.tabStateRequest) {
     // Side panel is requesting current tab state (e.g., after tab switch)
-    console.log('📥 Content script: tabStateRequest received')
     if (!isYouTubeVideoPage()) {
-      console.log('📤 Content script: responding with no_video')
       sendResponse({ pageState: 'no_video' })
     } else if (transcriptCache) {
-      console.log('📤 Content script: responding with ready, videoId:', transcriptCache.videoId)
       sendResponse({ 
         pageState: 'ready',
         videoId: transcriptCache.videoId,
@@ -469,7 +431,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       })
     } else {
       // On video page but transcript not ready yet
-      console.log('📤 Content script: responding with loading, videoId:', getVideoId())
       sendResponse({ 
         pageState: 'loading',
         videoId: getVideoId(),
@@ -499,16 +460,12 @@ function seekVideoToTimestamp(seconds: number) {
       
       // If video is paused, play it
       if (video.paused) {
-        video.play().catch(err => {
-          console.warn('Could not auto-play video:', err)
+        video.play().catch(() => {
+          // Could not auto-play
         })
       }
-      
-      console.log(`⏩ Seeked to ${seconds}s`)
-    } else {
-      console.warn('Could not find video element')
     }
   } catch (error) {
-    console.error('Error seeking video:', error)
+    // Error seeking video
   }
 }
